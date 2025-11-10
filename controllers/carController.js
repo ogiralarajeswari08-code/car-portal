@@ -1,4 +1,4 @@
-const Car = require('../models/Car');
+const { CarAtlas, CarLocal } = require('../models/Car');
 const fs = require('fs');
 const path = require('path');
 
@@ -28,8 +28,16 @@ exports.createCar = async (req, res) => {
     // basic validation
     if (!data.regNo) return res.status(400).json({ message: 'regNo is required' });
 
-    const car = await Car.create(data);
-    res.status(201).json(car);
+    // Save to both databases
+    const [carAtlas, carLocal] = await Promise.all([
+      CarAtlas.create(data),
+      CarLocal.create(data).catch(err => {
+        console.error('Failed to save to local DB:', err.message);
+        return null; // Continue even if local fails
+      })
+    ]);
+
+    res.status(201).json(carAtlas);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -74,9 +82,10 @@ exports.getAllCars = async (req, res) => {
     const lim = Math.max(1, Math.min(100, parseInt(limit)));
     const sort = { [sortBy]: sortDir === 'asc' ? 1 : -1 };
 
+    // Read from Atlas (primary)
     const [items, total] = await Promise.all([
-      Car.find(filter).sort(sort).skip((pageNum - 1) * lim).limit(lim),
-      Car.countDocuments(filter)
+      CarAtlas.find(filter).sort(sort).skip((pageNum - 1) * lim).limit(lim),
+      CarAtlas.countDocuments(filter)
     ]);
 
     res.json({ total, page: pageNum, limit: lim, items });
@@ -87,7 +96,7 @@ exports.getAllCars = async (req, res) => {
 
 exports.getCar = async (req, res) => {
   try {
-    const car = await Car.findById(req.params.id);
+    const car = await CarAtlas.findById(req.params.id);
     if (!car) return res.status(404).json({ message: 'Not found' });
     res.json(car);
   } catch (err) {
@@ -100,7 +109,7 @@ exports.updateCar = async (req, res) => {
     const data = req.body || {};
 
     // find existing to possibly remove old files
-    const existing = await Car.findById(req.params.id);
+    const existing = await CarAtlas.findById(req.params.id);
     if (!existing) return res.status(404).json({ message: 'Not found' });
 
     if (req.files) {
@@ -118,8 +127,16 @@ exports.updateCar = async (req, res) => {
     // don't allow changing createdBy via body
     delete data.createdBy;
 
-    const car = await Car.findByIdAndUpdate(req.params.id, data, { new: true });
-    res.json(car);
+    // Update in both databases
+    const [carAtlas, carLocal] = await Promise.all([
+      CarAtlas.findByIdAndUpdate(req.params.id, data, { new: true }),
+      CarLocal.findByIdAndUpdate(req.params.id, data, { new: true }).catch(err => {
+        console.error('Failed to update in local DB:', err.message);
+        return null;
+      })
+    ]);
+
+    res.json(carAtlas);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -127,14 +144,21 @@ exports.updateCar = async (req, res) => {
 
 exports.deleteCar = async (req, res) => {
   try {
-    const car = await Car.findById(req.params.id);
+    const car = await CarAtlas.findById(req.params.id);
     if (!car) return res.status(404).json({ message: 'Not found' });
 
     // remove uploaded files
     if (Array.isArray(car.photos)) car.photos.forEach(p => removeFileIfExists(p));
     if (car.video) removeFileIfExists(car.video);
 
-  await Car.findByIdAndDelete(req.params.id);
+    // Delete from both databases
+    await Promise.all([
+      CarAtlas.findByIdAndDelete(req.params.id),
+      CarLocal.findByIdAndDelete(req.params.id).catch(err => {
+        console.error('Failed to delete from local DB:', err.message);
+      })
+    ]);
+
     res.json({ message: 'Deleted' });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -150,20 +174,20 @@ exports.getStats = async (req, res) => {
     const startOfWeek = new Date(startOfToday);
     startOfWeek.setDate(startOfToday.getDate() - day);
 
-    const total = await Car.countDocuments({});
-    const today = await Car.countDocuments({ inOutDateTime: { $gte: startOfToday } });
-    const thisWeek = await Car.countDocuments({ inOutDateTime: { $gte: startOfWeek } });
+    const total = await CarAtlas.countDocuments({});
+    const today = await CarAtlas.countDocuments({ inOutDateTime: { $gte: startOfToday } });
+    const thisWeek = await CarAtlas.countDocuments({ inOutDateTime: { $gte: startOfWeek } });
 
-    const recent = await Car.find({}).sort({ inOutDateTime: -1 }).limit(10).lean();
+    const recent = await CarAtlas.find({}).sort({ inOutDateTime: -1 }).limit(10).lean();
 
     // top regNos
-    const topReg = await Car.aggregate([
+    const topReg = await CarAtlas.aggregate([
       { $group: { _id: '$regNo', count: { $sum: 1 } } },
       { $sort: { count: -1 } },
       { $limit: 5 }
     ]);
 
-    const topPersons = await Car.aggregate([
+    const topPersons = await CarAtlas.aggregate([
       { $group: { _id: '$personName', count: { $sum: 1 } } },
       { $sort: { count: -1 } },
       { $limit: 5 }
@@ -179,7 +203,7 @@ exports.getStats = async (req, res) => {
       d.setDate(start7.getDate() + i);
       const dayStart = new Date(d.getFullYear(), d.getMonth(), d.getDate());
       const dayEnd = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1);
-      promises.push(Car.countDocuments({ inOutDateTime: { $gte: dayStart, $lt: dayEnd } }));
+      promises.push(CarAtlas.countDocuments({ inOutDateTime: { $gte: dayStart, $lt: dayEnd } }));
       days.push(dayStart.toISOString().slice(0,10));
     }
     const counts = await Promise.all(promises);

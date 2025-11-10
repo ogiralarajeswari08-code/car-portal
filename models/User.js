@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { atlasConnection, localConnection } = require('../config/database');
 
 const userSchema = new mongoose.Schema({
   firstName: { type: String, required: true },
@@ -10,4 +11,8 @@ const userSchema = new mongoose.Schema({
   role: { type: String, enum: ['user', 'admin'], default: 'user' }
 }, { timestamps: true });
 
-module.exports = mongoose.model('User', userSchema);
+// Create models for both connections
+const UserAtlas = atlasConnection.model('User', userSchema);
+const UserLocal = localConnection.model('User', userSchema);
+
+module.exports = { UserAtlas, UserLocal };

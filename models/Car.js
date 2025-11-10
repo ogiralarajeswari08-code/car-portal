@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { atlasConnection, localConnection } = require('../config/database');
 
 const carSchema = new mongoose.Schema({
   inOutStatus: { type: String, enum: ['IN', 'OUT'], default: 'IN' },
@@ -26,4 +27,8 @@ carSchema.index({ inOutDateTime: 1 });
 // text index for generic search across several fields
 carSchema.index({ regNo: 'text', make: 'text', model: 'text', personName: 'text' });
 
-module.exports = mongoose.model('Car', carSchema);
+// Create models for both connections
+const CarAtlas = atlasConnection.model('Car', carSchema);
+const CarLocal = localConnection.model('Car', carSchema);
+
+module.exports = { CarAtlas, CarLocal };
